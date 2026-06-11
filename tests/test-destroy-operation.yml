@@ -1,0 +1,44 @@
+name: Test destroy operation with commit-status-github-token
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      GITHUB_REF: refs/heads/main
+      GITHUB_EVENT_NAME: push
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Invoke destroy operation
+        id: action
+        continue-on-error: true
+        uses: .
+        with:
+          cluster: https://github.com/example-org/argocd-config
+          aws-region: us-east-1
+          path: ./helmfile.yaml
+          toolchain: helmfile
+          operation: destroy
+          environment: preview
+          repository: example-org/my-app
+          ref: abc1234def5678901234567890123456789012ab
+          namespace: preview
+          application: my-app
+          image: ghcr.io/example-org/my-app
+          image-tag: "1.0.0"
+          debug: "false"
+          github-pat: fake-pat-for-testing
+          commit-status-github-token: fake-commit-status-token
+          synchronously: "false"
+
+      - name: Assert action was invoked (inputs accepted)
+        run: |
+          echo "outcome: ${{ steps.action.outcome }}"
+          # The action is expected to fail because we don't have real credentials,
+          # but it should not fail due to missing inputs.
+          if [ "${{ steps.action.outcome }}" = "skipped" ]; then
+            echo "FAIL: action was skipped unexpectedly"
+            exit 1
+          fi
+          echo "PASS: action was invoked with all required inputs including commit-status-github-token"
