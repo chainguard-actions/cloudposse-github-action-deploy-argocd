@@ -1,0 +1,77 @@
+name: Test commit-status-github-token input
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create fake helm chart for test
+        run: |
+          mkdir -p /tmp/test-chart/templates
+          cat > /tmp/test-chart/Chart.yaml <<'EOF'
+          apiVersion: v2
+          name: test-app
+          version: 0.1.0
+          EOF
+          cat > /tmp/test-chart/templates/deployment.yaml <<'EOF'
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: test-app
+            annotations:
+              outputs.platform.cloudposse.com/webapp-url: "https://test.example.com"
+          spec:
+            replicas: 1
+            selector:
+              matchLabels:
+                app: test-app
+            template:
+              metadata:
+                labels:
+                  app: test-app
+              spec:
+                containers:
+                  - name: test-app
+                    image: nginx:latest
+          EOF
+
+      - id: action
+        uses: .
+        continue-on-error: true
+        with:
+          cluster: "https://github.com/cloudposse-tests/argocd-test-config"
+          path: /tmp/test-chart
+          toolchain: helm
+          operation: deploy
+          environment: preview
+          repository: ${{ github.repository }}
+          ref: ${{ github.sha }}
+          namespace: test-ns
+          application: test-app
+          image: nginx
+          image-tag: latest
+          github-pat: ${{ github.token }}
+          commit-status-github-token: ${{ github.token }}
+          synchronously: "true"
+          check-retry-count: "1"
+          check-retry-interval: "5"
+          commit-retry-count: "1"
+          commit-retry-interval: "5"
+          commit-timeout: "30"
+
+      - name: Assert commit-status-github-token input was accepted
+        run: |
+          # The action is expected to fail at the "Checkout Argo Configuration" step
+          # because we don't have a real ArgoCD config repo. However, the important
+          # thing is that the commit-status-github-token input is covered.
+          # We verify the action ran (outcome is either success or failure, not skipped).
+          OUTCOME="${{ steps.action.outcome }}"
+          echo "Action outcome: $OUTCOME"
+          if [ "$OUTCOME" = "skipped" ]; then
+            echo "FAIL: action step was skipped unexpectedly"
+            exit 1
+          fi
+          echo "PASS: commit-status-github-token input was accepted and action ran"

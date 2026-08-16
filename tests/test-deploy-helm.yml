@@ -1,4 +1,4 @@
-name: Test deploy helmfile toolchain
+name: Test deploy helm toolchain
 on:
   workflow_dispatch:
 jobs:
@@ -7,27 +7,28 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Test deploy with helmfile toolchain (expects failure at checkout step)
-        id: action-deploy
+      - name: Test deploy with helm toolchain (expects failure at checkout step)
+        id: action-deploy-helm
         uses: .
         continue-on-error: true
         with:
           cluster: "https://github.com/nonexistent-org-xyz-123/nonexistent-argocd-config-repo.git"
-          path: "tests/fixtures/helmfile/helmfile.yaml"
-          toolchain: helmfile
+          path: "tests/fixtures/helm/chart"
+          toolchain: helm
           operation: deploy
-          environment: preview
+          environment: staging
           repository: "test-owner/test-app"
-          ref: "abc1234def5678"
-          namespace: "test-namespace"
-          application: "test-app"
-          image: "nginx"
-          image-tag: "1.21.0"
+          ref: "deadbeef1234"
+          namespace: "staging-namespace"
+          application: "my-app"
+          image: "myregistry/myapp"
+          image-tag: "v2.0.0"
+          helm-dependency-build: "false"
           github-pat: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Assert action failed at checkout (not at input parsing)
         env:
-          OUTCOME: ${{ steps.action-deploy.outcome }}
+          OUTCOME: ${{ steps.action-deploy-helm.outcome }}
         run: |
           echo "outcome: $OUTCOME"
           # The action should fail because the ArgoCD config repo doesn't exist
