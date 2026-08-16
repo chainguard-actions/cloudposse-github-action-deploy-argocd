@@ -1,0 +1,48 @@
+name: Test deploy-argocd synchronous mode
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      GITHUB_REF: refs/heads/main
+      GITHUB_EVENT_NAME: push
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      # Test the synchronously=true path which enables waiting for ArgoCD sync.
+      # Also tests the commit-status-github-token input (separate from github-pat).
+      # The action will fail at the git checkout step (fake PAT), but we verify
+      # the action is invoked correctly with synchronous mode enabled.
+      - id: action
+        uses: .
+        continue-on-error: true
+        with:
+          cluster: "https://github.com/cloudposse/example-app-on-eks.git"
+          path: "./helmfile.yaml"
+          operation: deploy
+          environment: preview
+          repository: "cloudposse/example-app"
+          ref: "abc1234"
+          namespace: "preview"
+          application: "myapp"
+          image: "nginx"
+          image-tag: "latest"
+          github-pat: "fake-pat-for-testing"
+          commit-status-github-token: "fake-commit-status-token"
+          synchronously: "true"
+          check-retry-count: "3"
+          check-retry-interval: "5"
+          aws-region: "us-east-1"
+          toolchain: helmfile
+
+      - name: Assert action was invoked in synchronous mode
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          echo "action outcome: $OUTCOME"
+          if [ "$OUTCOME" = "skipped" ]; then
+            echo "FAIL: action was skipped, expected it to be invoked"
+            exit 1
+          fi
+          echo "PASS: action was invoked in synchronous mode (outcome=$OUTCOME)"

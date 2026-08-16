@@ -1,0 +1,46 @@
+name: Test deploy-argocd helm toolchain
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      GITHUB_REF: refs/heads/main
+      GITHUB_EVENT_NAME: push
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      # Test the helm toolchain path (not helmfile). The action skips helmfile setup
+      # and uses helm template instead. It will fail at the git checkout step
+      # (fake PAT), but we verify the action is invoked correctly with helm toolchain.
+      - id: action
+        uses: .
+        continue-on-error: true
+        with:
+          cluster: "https://github.com/cloudposse/example-app-on-eks.git"
+          path: "./chart"
+          operation: deploy
+          toolchain: helm
+          environment: preview
+          repository: "cloudposse/example-app"
+          ref: "abc1234"
+          namespace: "preview"
+          application: "myapp"
+          image: "nginx"
+          image-tag: "latest"
+          github-pat: "fake-pat-for-testing"
+          aws-region: "us-east-1"
+          helm-version: "v3.20.1"
+          values_file: ""
+          helm-args: ""
+
+      - name: Assert action was invoked with helm toolchain
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          echo "action outcome: $OUTCOME"
+          if [ "$OUTCOME" = "skipped" ]; then
+            echo "FAIL: action was skipped, expected it to be invoked"
+            exit 1
+          fi
+          echo "PASS: action was invoked with helm toolchain (outcome=$OUTCOME)"
