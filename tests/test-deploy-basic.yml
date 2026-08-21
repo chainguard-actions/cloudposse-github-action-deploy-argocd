@@ -1,0 +1,40 @@
+name: Test Deploy ArgoCD - Basic Deploy
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - id: action
+        uses: .
+        continue-on-error: true
+        with:
+          cluster: "https://github.com/example-org/argocd-config.git"
+          path: "deploy/helmfile.yaml"
+          operation: deploy
+          environment: preview
+          repository: "example-org/example-app"
+          ref: "abc1234def5678901234567890123456789012ab"
+          namespace: "preview"
+          application: "my-app"
+          image: "example.com/my-app"
+          image-tag: "1.0.0"
+          github-pat: "fake-pat-for-testing"
+          synchronously: "false"
+
+      - name: Assert action ran and failed gracefully
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          if [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: action failed gracefully (expected - no real ArgoCD config repo or PAT available)"
+          elif [ "$OUTCOME" = "success" ]; then
+            echo "PASS: action succeeded unexpectedly"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi

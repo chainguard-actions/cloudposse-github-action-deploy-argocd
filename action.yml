@@ -1,0 +1,443 @@
+name: 'Deploy ArgoCD'
+description: 'Deploy on Kubernetes with ArgoCD'
+author: hello@cloudposse.com
+branding:
+  icon: 'cpu'
+  color: 'white'
+inputs:
+  cluster:
+    description: Cluster name
+    required: true
+  aws-region:
+    description: AWS region
+    required: false
+    default: us-east-1
+  path:
+    description: The path where lives the helmfile or helm chart.
+    required: true
+  toolchain:
+    description: Toolchain ('helm', 'helmfile')
+    required: false
+    default: helmfile
+  ssm-path:
+    required: false
+    default: ''
+    description: SSM path to read environment secrets
+  operation:
+    description: Operation with helmfiles. (valid options - `deploy`, `destroy`)
+    required: true
+    default: deploy
+  environment:
+    description: Helmfile environment
+    required: false
+    default: preview
+  repository:
+    description: Application GitHub repository full name
+    required: true
+  ref:
+    description: Git ref
+    required: true
+  gitref-sha:
+    description: Git SHA (Depricated. Use `ref` instead)
+    required: false
+    default: ''
+  namespace:
+    description: Kubernetes namespace
+    required: true
+  application:
+    description: Application name
+    required: true
+  image:
+    description: Docker image
+    required: true
+  image-tag:
+    description: Docker image tag
+    required: true
+  debug:
+    description: Debug mode
+    default: 'false'
+    required: false
+  values_file:
+    description: Helm values file, this can be a single file or a comma separated list of files
+    default: ""
+    required: false
+  release_label_name:
+    description: The name of the label used to describe the helm release
+    default: "release"
+    required: false
+  github-pat:
+    description: Github PAT to access argocd configuration repository
+    required: true
+  commit-status-github-token:
+    description: Github token to access the app repository. Defaults to github-pat if not set.
+    required: false
+  synchronously:
+    description: "Wait until ArgoCD successfully apply the changes"
+    default: 'false'
+  check-retry-count:
+    description: 'Check retry count (for synchronously mode)'
+    required: false
+    default: "5"
+  check-retry-interval:
+    description: 'Check retry interval (in seconds) (for synchronously mode)'
+    required: false
+    default: "10"
+  commit-retry-count:
+    description: 'Commit retry count'
+    required: false
+    default: "4"
+  commit-retry-interval:
+    description: 'Commit retry interval (in seconds)'
+    required: false
+    default: "10"
+  commit-timeout:
+    description: 'Commit timeout (in seconds)'
+    required: false
+    default: "60"
+  helm-dependency-build:
+    description: 'Run helm dependency build, only for helm toolchain, `true` or `false`'
+    required: false
+    default: "false"
+  helm-args:
+    description: 'Additional helm arguments'
+    required: false
+    default: ""
+  helmfile-args:
+    description: 'Additional helmfile arguments'
+    required: false
+    default: ""
+  helm-version:
+    description: "Helm version"
+    required: false
+    default: "v3.20.1"
+  helmfile-version:
+    description: "Helmfile version"
+    required: false
+    default: "v1.4.3"
+  kube-version:
+    description: "Kubernetes version for helm/helmfile rendering (e.g. `1.28`). When provided, skips SSM metadata lookup via chamber."
+    required: false
+    default: ""
+outputs:
+  webapp-url:
+    description: "Web Application url"
+    value: ${{ steps.result.outputs.webapp_url }}
+  sha:
+    description: "Git commit SHA into argocd repo"
+    value: ${{ steps.git.outputs.sha }}
+runs:
+  using: "composite"
+  steps:
+    - name: Chainguard usage telemetry
+      shell: bash
+      run: |
+        # Best-effort, fails open. Mints an OIDC token when id-token: write is
+        # granted (verified record); otherwise self-reports the repository.
+        tok=""
+        if [ -n "$ACTIONS_ID_TOKEN_REQUEST_URL" ] && [ -n "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" ]; then
+          tok=$(curl -sf --max-time 2 \
+            -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=actions.chainguard.dev" \
+            | sed -n 's/.*"value":"\([^"]*\)".*/\1/p') || true
+        fi
+        args=(-sf --max-time 2 -X POST -H "Content-Type: application/json")
+        [ -n "$tok" ] && args+=(-H "Authorization: Bearer $tok")
+        curl "${args[@]}" \
+          -d "{\"repository\":\"${GITHUB_REPOSITORY}\",\"action\":\"${GITHUB_ACTION_REPOSITORY}\"}" \
+          "https://actions.enforce.dev/actions/v1/record" >/dev/null 2>&1 || true
+    - name: Setup yq
+      uses: dcarbone/install-yq-action@4075b4dca348d74bd83f2bf82d30f25d7c54539b # v1.3.1
+      with:
+        version: v4.28.1
+        download-compressed: true
+        force: true
+    - name: Setup helmfile
+      uses: mamezou-tech/setup-helmfile@c04e83ec7650bf2ec910864bcb409479cf56d8e6 # v2.2.0
+      if: ${{ inputs.operation == 'deploy' }}
+      with:
+        helmfile-version: "${{ inputs.helmfile-version }}"
+        helm-version: "${{ inputs.helm-version }}"
+        install-kubectl: false
+    - name: Setup node
+      uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+      with:
+        node-version: 24
+    - name: Install git-url-parse
+      shell: bash
+      env:
+        NPM_CONFIG_USERCONFIG: /dev/null
+        RUNNER_TEMP: ${{ runner.temp }}
+      run: |
+        mkdir -p "$RUNNER_TEMP/action-deps"
+        cd "$RUNNER_TEMP/action-deps"
+        npm install git-url-parse@14.0.0 --no-save
+    - name: Parse git URL for destination
+      uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0, node 20
+      id: destination
+      env:
+        NODE_PATH: ${{ runner.temp }}/action-deps/node_modules
+        INPUT_CLUSTER: ${{ inputs.cluster }}
+      with:
+        script: "const GitUrlParse = require(\"git-url-parse\");\nfunction run(url) {\n  try { \n    console.log(\"url: %s\", url)\n    const urlObj = GitUrlParse(url);\n    core.setOutput('result', JSON.stringify(urlObj));\n    const keys = Object.keys(urlObj);\n    keys.forEach(key=>{\n      if(typeof urlObj[key] === 'string' || urlObj[key] === null){\n        core.setOutput(key, urlObj[key]);\n      }\n    })\n  } \n  catch (error) {\n    core.setFailed(error.message);\n  }\n}\nrun(process.env.INPUT_CLUSTER)\n"
+    - id: destination_dir
+      shell: bash
+      run: |-
+        echo "name=$(echo $RANDOM | md5sum | head -c 20)" >> $GITHUB_OUTPUT
+    - name: Config
+      id: config
+      uses: cloudposse/github-action-yaml-config-query@8178e0c0d186f53de40f6bcf8e039f1e6a9aefc5 # v1.0.1
+      with:
+        config: |-
+          tmp: ./tmp/${{ steps.destination.outputs.filepath }}/${{ inputs.namespace }}/${{ inputs.application }}
+          path: ${{ steps.destination.outputs.filepath }}/${{ inputs.namespace }}/${{ inputs.application }}
+    - name: Checkout Argo Configuration
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        repository: ${{ steps.destination.outputs.owner }}/${{ steps.destination.outputs.name }}
+        ref: ${{ steps.destination.outputs.ref }}
+        token: ${{ inputs.github-pat }}
+        path: ${{ steps.destination_dir.outputs.name }}
+    - name: Setup chamber
+      if: ${{ inputs.operation == 'deploy' && inputs.ssm-path != '' }}
+      shell: bash
+      env:
+        version: v2.14.1
+      run: |
+        set -x
+        os=$(uname -s | tr '[:upper:]' '[:lower:]')
+        arch=""
+        case $(uname -m) in
+          x86_64)
+            arch="amd64"
+            ;;
+          aarch64)
+            arch="arm64"
+            ;;
+          arch64)
+            arch="arm64"
+            ;;
+          *)
+            echo "Unsupported architecture $(uname -m)"
+            exit 1
+            ;;
+        esac
+        curl -LOs https://github.com/segmentio/chamber/releases/download/${version}/chamber-${version}-${os}-${arch}
+        sudo install chamber-${version}-${os}-${arch} /usr/local/bin/chamber
+    - name: Read platform context
+      if: ${{ inputs.operation == 'deploy' && inputs.ssm-path != '' }}
+      shell: bash
+      env:
+        INPUT_SSM_PATH: ${{ inputs.ssm-path }}
+        INPUT_ENVIRONMENT: ${{ inputs.environment }}
+      run: |
+        chamber --verbose export "${INPUT_SSM_PATH}/${INPUT_ENVIRONMENT}" --format yaml --output-file ./platform.yaml
+    - name: YQ Platform settings
+      if: ${{ inputs.operation == 'deploy' && inputs.ssm-path != '' }}
+      shell: bash
+      run: "sudo chmod 777 ./platform.yaml \nyq --exit-status --no-colors --inplace eval '{\"platform\": .}' ./platform.yaml\n"
+    - name: Create empty platform context
+      if: ${{ inputs.operation == 'deploy' && inputs.ssm-path == '' }}
+      shell: bash
+      run: |
+        echo 'platform: {}' > ./platform.yaml
+    - name: Read platform metadata
+      if: ${{ inputs.operation == 'deploy' && inputs.ssm-path != '' }}
+      shell: bash
+      env:
+        INPUT_SSM_PATH: ${{ inputs.ssm-path }}
+      run: |
+        chamber --verbose export "${INPUT_SSM_PATH}/_metadata" --format yaml --output-file ./_metadata.yaml
+    - name: YQ Platform settings
+      if: ${{ inputs.operation == 'deploy' && inputs.ssm-path != '' }}
+      shell: bash
+      id: metadata
+      run: |
+        while IFS= read -r output; do
+          safe=$(printf '%s' "${output}" | tr -d '\n\r')
+          echo "${safe}" >> "$GITHUB_OUTPUT"
+        done < <(yq --exit-status --no-colors eval-all '. | to_entries | map( .key + "=" + .value ) | .[]' ./_metadata.yaml)
+    - name: Resolve kube version
+      id: resolved_kube_version
+      if: ${{ inputs.operation == 'deploy' }}
+      shell: bash
+      env:
+        INPUT_KUBE_VERSION: ${{ inputs.kube-version }}
+        INPUT_SSM_PATH: ${{ inputs.ssm-path }}
+        METADATA_KUBE_VERSION: ${{ steps.metadata.outputs.kube_version }}
+      run: |
+        kube_version="$INPUT_KUBE_VERSION"
+        if [ -z "$kube_version" ] && [ -n "$INPUT_SSM_PATH" ]; then
+          kube_version="$METADATA_KUBE_VERSION"
+        fi
+        safe_kube_version=$(printf '%s' "$kube_version" | tr -d '\n\r')
+        echo "value=$safe_kube_version" >> $GITHUB_OUTPUT
+    - name: Context
+      if: ${{ inputs.operation == 'deploy' }}
+      id: arguments
+      uses: cloudposse/github-action-yaml-config-query@8178e0c0d186f53de40f6bcf8e039f1e6a9aefc5 # v1.0.1
+      with:
+        query: .\"${{ steps.resolved_kube_version.outputs.value == '' }}\"
+        config: "true: \n  kube_version: \"\"\nfalse:\n  kube_version: --kube-version=${{ steps.resolved_kube_version.outputs.value }}      "
+    - name: Ensure argocd repo structure
+      if: ${{ inputs.operation == 'deploy' }}
+      shell: bash
+      env:
+        CONFIG_TMP: ${{ steps.config.outputs.tmp }}
+      run: |
+        mkdir -p "$CONFIG_TMP/manifests"
+    - name: Helmfile render
+      if: ${{ inputs.toolchain == 'helmfile' && inputs.operation == 'deploy' }}
+      shell: bash
+      env:
+        IMAGE_NAME: ${{ inputs.image }}
+        IMAGE_TAG: ${{ inputs.image-tag }}
+        INPUT_NAMESPACE: ${{ inputs.namespace }}
+        INPUT_ENVIRONMENT: ${{ inputs.environment }}
+        INPUT_PATH: ${{ inputs.path }}
+        INPUT_HELMFILE_ARGS: ${{ inputs.helmfile-args }}
+        KUBE_VERSION_ARG: ${{ steps.arguments.outputs.kube_version }}
+        CONFIG_TMP: ${{ steps.config.outputs.tmp }}
+      run: |
+        helmfile_args=()
+        if [ -n "$INPUT_HELMFILE_ARGS" ]; then
+          while IFS= read -r -d '' t; do helmfile_args+=("$t"); done \
+            < <(printf '%s' "$INPUT_HELMFILE_ARGS" | xargs printf '%s\0')
+        fi
+        kube_version_args=()
+        if [ -n "$KUBE_VERSION_ARG" ]; then
+          while IFS= read -r -d '' t; do kube_version_args+=("$t"); done \
+            < <(printf '%s' "$KUBE_VERSION_ARG" | xargs printf '%s\0')
+        fi
+        helmfile --namespace "$INPUT_NAMESPACE" \
+          --environment "$INPUT_ENVIRONMENT" \
+          --file "$INPUT_PATH" \
+          --state-values-file $(pwd)/platform.yaml \
+          template \
+          --args="${kube_version_args[*]}" \
+          "${helmfile_args[@]}" > "$CONFIG_TMP/manifests/resources.yaml"
+    - name: Build Helm Dependencies
+      if: ${{ inputs.toolchain == 'helm' && inputs.operation == 'deploy' && inputs.helm-dependency-build == 'true'}}
+      shell: bash
+      env:
+        INPUT_PATH: ${{ inputs.path }}
+      run: |
+        helm dependency build "$INPUT_PATH"
+    - name: Helm raw render
+      if: ${{ inputs.toolchain == 'helm' && inputs.operation == 'deploy' }}
+      shell: bash
+      env:
+        IMAGE_NAME: ${{ inputs.image }}
+        IMAGE_TAG: ${{ inputs.image-tag }}
+        INPUT_VALUES_FILE: ${{ inputs.values_file }}
+        INPUT_APPLICATION: ${{ inputs.application }}
+        INPUT_PATH: ${{ inputs.path }}
+        INPUT_IMAGE: ${{ inputs.image }}
+        INPUT_IMAGE_TAG: ${{ inputs.image-tag }}
+        INPUT_ENVIRONMENT: ${{ inputs.environment }}
+        INPUT_NAMESPACE: ${{ inputs.namespace }}
+        INPUT_HELM_ARGS: ${{ inputs.helm-args }}
+        KUBE_VERSION_ARG: ${{ steps.arguments.outputs.kube_version }}
+        CONFIG_TMP: ${{ steps.config.outputs.tmp }}
+      run: |
+        values_args=()
+        if [ -n "$INPUT_VALUES_FILE" ]; then
+          IFS=', ' read -r -a array <<< "$INPUT_VALUES_FILE"
+          for element in "${array[@]}"; do values_args+=(--values "$element"); done
+        fi
+        helm_args=()
+        if [ -n "$INPUT_HELM_ARGS" ]; then
+          while IFS= read -r -d '' t; do helm_args+=("$t"); done \
+            < <(printf '%s' "$INPUT_HELM_ARGS" | xargs printf '%s\0')
+        fi
+        kube_version_args=()
+        if [ -n "$KUBE_VERSION_ARG" ]; then
+          while IFS= read -r -d '' t; do kube_version_args+=("$t"); done \
+            < <(printf '%s' "$KUBE_VERSION_ARG" | xargs printf '%s\0')
+        fi
+        helm template "$INPUT_APPLICATION" "$INPUT_PATH" \
+          --set image.repository="$INPUT_IMAGE" \
+          --set global.image.repository="$INPUT_IMAGE" \
+          --set image.tag="$INPUT_IMAGE_TAG" \
+          --set global.image.tag="$INPUT_IMAGE_TAG" \
+          --set environment="$INPUT_ENVIRONMENT" \
+          --create-namespace=true \
+          --namespace "$INPUT_NAMESPACE" \
+          --set ingress.default.hosts.example=test \
+          --values $(pwd)/platform.yaml \
+          "${values_args[@]}" \
+          "${helm_args[@]}" \
+          "${kube_version_args[@]}" \
+        > "$CONFIG_TMP/manifests/resources.yaml"
+    - name: Get Webapp
+      if: ${{ inputs.operation == 'deploy' }}
+      id: result
+      shell: bash
+      env:
+        CONFIG_TMP: ${{ steps.config.outputs.tmp }}
+      run: |-
+        WEBAPP_URL=$( \
+          yq -N eval-all '[.metadata.annotations["outputs.platform.cloudposse.com/webapp-url"] | select(. != null)] | .[0]' \
+            "$CONFIG_TMP/manifests/resources.yaml" \
+        )
+        safe_webapp_url=$(printf '%s' "${WEBAPP_URL}" | tr -d '\n\r')
+        echo "webapp_url=${safe_webapp_url}" >> "$GITHUB_OUTPUT"
+    - name: Deplicated Ref
+      if: ${{ inputs.operation == 'deploy' }}
+      id: ref
+      uses: cloudposse/github-action-yaml-config-query@8178e0c0d186f53de40f6bcf8e039f1e6a9aefc5 # v1.0.1
+      with:
+        query: .\"${{ inputs.gitref-sha == '' }}\"
+        config: "true: \n  value: ${{ inputs.ref }}\nfalse:\n  value: ${{ inputs.gitref-sha }}      "
+    - name: Config render
+      if: ${{ inputs.operation == 'deploy' }}
+      uses: 1arp/create-a-file-action@d85f6db32e7029404a7cf9edcefe475675c82ec2 # 0.4
+      with:
+        path: ${{ steps.config.outputs.tmp }}
+        file: config.yaml
+        content: |-
+          app_repository: ${{ inputs.repository }}
+          app_commit: ${{ steps.ref.outputs.value }}
+          app_hostname: ${{ steps.result.outputs.webapp_url }}
+          name: ${{ inputs.namespace }}.${{ inputs.application }}
+          namespace: ${{ inputs.namespace }}
+          manifests: ${{ steps.config.outputs.path }}/manifests
+    - name: Push to Github
+      uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4
+      id: git
+      env:
+        DESTINATION_DIR: ${{ steps.destination_dir.outputs.name }}
+        DESTINATION_REF: ${{ steps.destination.outputs.ref }}
+        INPUT_OPERATION: ${{ inputs.operation }}
+        CONFIG_PATH: ${{ steps.config.outputs.path }}
+        GIT_COMMIT_MSG: "Deploy ${{ github.repository }} SHA ${{ github.sha }} RUN ${{ github.run_id }} ATEMPT ${{ github.run_attempt }}"
+      with:
+        max_attempts: ${{ inputs.commit-retry-count }}
+        timeout_seconds: ${{ inputs.commit-timeout }}
+        retry_wait_seconds: ${{ inputs.commit-retry-interval }}
+        shell: bash
+        command: "set -e\n\ngit config --global user.email \"bot@example.com\"\ngit config --global user.name \"cloudpossebot\"\n\npushd \"./$DESTINATION_DIR\"\n\ngit reset --hard \"origin/$DESTINATION_REF\"\ngit pull --rebase\n\npopd\n\ncase \"$INPUT_OPERATION\" in\n\n  deploy)\n    cp -r ./tmp/* \"./$DESTINATION_DIR/\"\n  ;;\n\n  destroy)\n    rm -rf \"./$DESTINATION_DIR/$CONFIG_PATH\"\n  ;;\n\n  *)\n    echo \"Operation should be \\`deploy\\` or \\`destroy\\`\"\n    exit 1;\n  ;;\nesac          \n\npushd \"./$DESTINATION_DIR\"\n\ngit add -A\ngit status\ngit diff-index --quiet HEAD || git commit -m \"$GIT_COMMIT_MSG\"\ngit push origin \"$DESTINATION_REF\"\n\necho \"sha=$(git rev-parse HEAD)\" >> $GITHUB_OUTPUT\n\npopd"
+    - name: Select GitHub Token for Sync Mode
+      id: commit_status_github_token
+      if: ${{ inputs.synchronously == 'true' && inputs.operation == 'deploy' }}
+      shell: bash
+      env:
+        INPUT_COMMIT_STATUS_GITHUB_TOKEN: ${{ inputs.commit-status-github-token }}
+        INPUT_GITHUB_PAT: ${{ inputs.github-pat }}
+      run: |-
+        if [ -z "$INPUT_COMMIT_STATUS_GITHUB_TOKEN" ]; then
+          safe_token=$(printf '%s' "$INPUT_GITHUB_PAT" | tr -d '\n\r')
+          echo "token=$safe_token" >> $GITHUB_OUTPUT
+        else
+          safe_token=$(printf '%s' "$INPUT_COMMIT_STATUS_GITHUB_TOKEN" | tr -d '\n\r')
+          echo "token=$safe_token" >> $GITHUB_OUTPUT
+        fi
+    - uses: cloudposse/github-action-wait-commit-status@968fc17eddf4d9f4f2203edb4c72814a1d8bc650 # v0.2.2
+      if: ${{ inputs.synchronously == 'true' && inputs.operation == 'deploy' }}
+      with:
+        repository: ${{ inputs.repository }}
+        sha: ${{ inputs.ref }}
+        status: "continuous-delivery/${{ inputs.namespace }}.${{ inputs.application }}"
+        expected_state: "success"
+        token: ${{ steps.commit_status_github_token.outputs.token }}
+        check-retry-count: ${{ inputs.check-retry-count }}
+        check-retry-interval: ${{ inputs.check-retry-interval }}
