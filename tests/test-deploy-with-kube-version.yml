@@ -1,4 +1,4 @@
-name: Test deploy-argocd destroy operation
+name: Test deploy-argocd deploy with explicit kube-version
 on:
   workflow_dispatch:
 jobs:
@@ -15,7 +15,7 @@ jobs:
           aws-region: us-east-1
           path: "tests/fixtures/helmfile.yaml"
           toolchain: helmfile
-          operation: destroy
+          operation: deploy
           environment: preview
           repository: "cloudposse/example-app"
           ref: "abc1234def5678901234567890123456789012ab"
@@ -25,6 +25,8 @@ jobs:
           image-tag: "latest"
           github-pat: ${{ secrets.GITHUB_TOKEN }}
           synchronously: "false"
+          kube-version: "1.28"
+          ssm-path: ""
 
       - name: Assert action ran (fails gracefully on non-existent argocd config repo)
         env:

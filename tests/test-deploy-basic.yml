@@ -1,4 +1,4 @@
-name: Test deploy-argocd destroy operation
+name: Test deploy-argocd basic deploy (helmfile)
 on:
   workflow_dispatch:
 jobs:
@@ -15,7 +15,7 @@ jobs:
           aws-region: us-east-1
           path: "tests/fixtures/helmfile.yaml"
           toolchain: helmfile
-          operation: destroy
+          operation: deploy
           environment: preview
           repository: "cloudposse/example-app"
           ref: "abc1234def5678901234567890123456789012ab"

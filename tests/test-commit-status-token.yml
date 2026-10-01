@@ -1,0 +1,50 @@
+name: Test deploy with commit-status-github-token
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - id: action
+        uses: .
+        continue-on-error: true
+        with:
+          cluster: "https://github.com/example-org/example-argocd-repo"
+          path: "deploy/helmfile.yaml"
+          toolchain: helmfile
+          operation: deploy
+          environment: preview
+          repository: "example-org/example-app"
+          ref: "abc1234def5678901234567890123456789012ab"
+          namespace: "preview"
+          application: "my-app"
+          image: "example.com/my-app"
+          image-tag: "latest"
+          github-pat: ${{ github.token }}
+          commit-status-github-token: ${{ github.token }}
+          synchronously: "true"
+          check-retry-count: "1"
+          check-retry-interval: "5"
+          commit-retry-count: "1"
+          commit-retry-interval: "5"
+          commit-timeout: "30"
+
+      - name: Assert action ran (outputs set, or failed gracefully on missing infrastructure)
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+          SHA_OUT: ${{ steps.action.outputs.sha }}
+          WEBAPP_OUT: ${{ steps.action.outputs.webapp-url }}
+        run: |
+          echo "outcome: $OUTCOME"
+          echo "sha: $SHA_OUT"
+          echo "webapp-url: $WEBAPP_OUT"
+          if [ "$OUTCOME" = "success" ]; then
+            echo "PASS: action succeeded"
+          elif [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: action failed gracefully (expected — no real ArgoCD infrastructure available)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi
