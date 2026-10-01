@@ -1,4 +1,4 @@
-name: Test Deploy ArgoCD - Helmfile Basic Deploy
+name: Test Deploy ArgoCD - Cluster URL Parsing
 on:
   workflow_dispatch:
 jobs:
@@ -7,27 +7,28 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
+      # Test with SSH-style git URL for cluster
       - id: action
         uses: .
         continue-on-error: true
         with:
-          # cluster is parsed as a git URL for the ArgoCD config repo
-          cluster: "https://github.com/cloudposse/test-argocd-config.git"
+          # SSH-style URL to test URL parsing
+          cluster: "git@github.com:cloudposse/test-argocd-config.git"
           aws-region: us-east-1
           path: tests/fixtures/helmfile/helmfile.yaml
           toolchain: helmfile
           operation: deploy
-          environment: preview
+          environment: staging
           repository: cloudposse/test-app
           ref: abc1234def5678901234567890abcdef12345678
-          namespace: preview
+          namespace: staging
           application: myapp
           image: nginx
           image-tag: "1.25.0"
           github-pat: ${{ secrets.GITHUB_TOKEN }}
           synchronously: "false"
 
-      - name: Assert action ran (fails gracefully on missing ArgoCD repo)
+      - name: Assert action ran with SSH cluster URL (fails gracefully on missing ArgoCD repo)
         env:
           OUTCOME: ${{ steps.action.outcome }}
         run: |
@@ -35,7 +36,7 @@ jobs:
           if [ "$OUTCOME" = "success" ]; then
             echo "PASS: action succeeded"
           elif [ "$OUTCOME" = "failure" ]; then
-            echo "PASS: action failed gracefully (expected - ArgoCD config repo not accessible)"
+            echo "PASS: action failed gracefully (expected - ArgoCD config repo not accessible via SSH)"
           else
             echo "FAIL: unexpected outcome '$OUTCOME'"
             exit 1

@@ -1,0 +1,16 @@
+repositories:
+  - name: stable
+    url: https://charts.helm.sh/stable
+
+releases:
+  - name: myapp
+    namespace: preview
+    chart: stable/nginx-ingress
+    version: 1.41.3
+    values:
+      - platform.yaml
+    set:
+      - name: image.repository
+        value: {{ env "IMAGE_NAME" | default "nginx" }}
+      - name: image.tag
+        value: {{ env "IMAGE_TAG" | default "latest" }}
