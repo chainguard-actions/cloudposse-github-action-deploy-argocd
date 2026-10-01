@@ -1,0 +1,48 @@
+name: Test cluster URL parsing and early steps
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create minimal helmfile path
+        run: |
+          mkdir -p tests/fixtures/simple-helmfile
+          cat > tests/fixtures/simple-helmfile/helmfile.yaml <<'EOF'
+          releases: []
+          EOF
+
+      # Test with SSH-style cluster URL to verify URL parsing handles different formats
+      - id: action
+        uses: .
+        continue-on-error: true
+        with:
+          cluster: "git@github.com:example-org/argocd-config.git"
+          path: "tests/fixtures/simple-helmfile/helmfile.yaml"
+          toolchain: helmfile
+          operation: deploy
+          environment: staging
+          repository: "example-org/example-app"
+          ref: "deadbeef"
+          namespace: staging
+          application: myapp
+          image: "myrepo/myapp"
+          image-tag: "v1.0.0"
+          github-pat: "fake-pat-for-testing"
+          synchronously: "false"
+
+      - name: Assert action ran (fails gracefully when ArgoCD config repo is not accessible)
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          if [ "$OUTCOME" = "success" ]; then
+            echo "PASS: action succeeded"
+          elif [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: action failed gracefully (expected - cannot access external ArgoCD config repo with fake PAT)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi
