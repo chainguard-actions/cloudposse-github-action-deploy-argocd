@@ -152,7 +152,7 @@ runs:
         download-compressed: true
         force: true
     - name: Setup helmfile
-      uses: mamezou-tech/setup-helmfile@c04e83ec7650bf2ec910864bcb409479cf56d8e6 # v2.2.0
+      uses: chainguard-actions/mamezou-tech-setup-helmfile@3640fc1c9e7d8325346b59cc06877c193489af40 # v2.2.0
       if: ${{ inputs.operation == 'deploy' }}
       with:
         helmfile-version: "${{ inputs.helmfile-version }}"
