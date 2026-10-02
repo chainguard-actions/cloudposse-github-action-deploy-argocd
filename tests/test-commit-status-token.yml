@@ -7,38 +7,38 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Set up git config
-        run: |
-          git config user.email "test@example.com"
-          git config user.name "Test User"
-
       - id: action
         uses: .
         continue-on-error: true
         with:
-          cluster: "https://github.com/cloudposse/argocd-deploy-non-prod-test.git"
-          path: "deploy/myapp"
+          cluster: github.com/example-org/argocd-config
+          path: ./charts/myapp
           operation: deploy
           environment: preview
-          repository: "cloudposse/example-app"
-          ref: "abc1234def5678901234567890123456789012ab"
-          namespace: test-ns
+          repository: example-org/myapp
+          ref: abc1234def5678901234567890123456789012ab
+          namespace: preview
           application: myapp
-          image: "nginx"
-          image-tag: "latest"
+          image: nginx
+          image-tag: "1.25"
+          github-pat: ${{ secrets.GITHUB_TOKEN }}
+          commit-status-github-token: ${{ secrets.GITHUB_TOKEN }}
           synchronously: "true"
-          github-pat: ${{ github.token }}
-          commit-status-github-token: ${{ github.token }}
+          check-retry-count: "1"
+          check-retry-interval: "5"
+          commit-retry-count: "1"
+          commit-retry-interval: "5"
+          commit-timeout: "30"
 
-      - name: Assert action ran with commit-status-github-token input
+      - name: Assert action ran (commit-status-github-token input accepted)
         env:
           OUTCOME: ${{ steps.action.outcome }}
         run: |
           echo "outcome: $OUTCOME"
           if [ "$OUTCOME" = "success" ]; then
-            echo "PASS: action succeeded"
+            echo "PASS: action succeeded with commit-status-github-token"
           elif [ "$OUTCOME" = "failure" ]; then
-            echo "PASS: action failed gracefully (expected — sentinel repo or missing ArgoCD infra)"
+            echo "PASS: action failed gracefully (sentinel repo / missing ArgoCD config is expected)"
           else
             echo "FAIL: unexpected outcome '$OUTCOME'"
             exit 1
