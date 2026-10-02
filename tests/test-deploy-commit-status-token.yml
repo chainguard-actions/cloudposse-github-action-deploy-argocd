@@ -7,7 +7,7 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Test deploy with explicit commit-status-github-token
+      - name: Deploy with commit-status-github-token
         id: action
         uses: .
         continue-on-error: true
@@ -26,9 +26,8 @@ jobs:
           github-pat: ${{ github.token }}
           commit-status-github-token: ${{ github.token }}
           synchronously: 'false'
-          debug: 'false'
 
-      - name: Assert action ran (failed gracefully on sentinel repo)
+      - name: Assert action ran (success or graceful failure on sentinel env)
         env:
           OUTCOME: ${{ steps.action.outcome }}
         run: |
@@ -36,7 +35,7 @@ jobs:
           if [ "$OUTCOME" = "success" ]; then
             echo "PASS: action succeeded"
           elif [ "$OUTCOME" = "failure" ]; then
-            echo "PASS: action failed gracefully (expected in harness environment with sentinel repo)"
+            echo "PASS: action failed gracefully (expected in sentinel/test environment)"
           else
             echo "FAIL: unexpected outcome '$OUTCOME'"
             exit 1
