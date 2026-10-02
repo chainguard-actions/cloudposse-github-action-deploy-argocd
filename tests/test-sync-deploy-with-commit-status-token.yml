@@ -1,4 +1,4 @@
-name: Test deploy with commit-status-github-token (synchronous mode)
+name: Test synchronous deploy with commit-status-github-token
 on:
   workflow_dispatch:
 jobs:
@@ -11,18 +11,17 @@ jobs:
         uses: .
         continue-on-error: true
         with:
-          cluster: "https://github.com/example-org/example-argocd-config"
-          aws-region: us-east-1
-          path: ./deploy/helmfile.yaml
+          cluster: "git@github.com:example-org/argocd-config.git"
+          path: "deploy/helmfile.yaml"
           toolchain: helmfile
           operation: deploy
           environment: preview
-          repository: example-org/example-app
-          ref: abc1234def5678901234567890abcdef12345678
+          repository: "example-org/example-app"
+          ref: "abc1234def5678901234567890123456789012ab"
           namespace: preview
           application: my-app
-          image: nginx
-          image-tag: "1.25.0"
+          image: "nginx"
+          image-tag: "latest"
           github-pat: ${{ github.token }}
           commit-status-github-token: ${{ github.token }}
           synchronously: "true"
@@ -31,21 +30,22 @@ jobs:
           commit-retry-count: "1"
           commit-retry-interval: "5"
           commit-timeout: "30"
-          debug: "false"
 
-      - name: Assert action ran (commit-status-github-token input accepted)
+      - name: Assert action ran (outputs set or failed gracefully on sentinel repo)
         env:
           OUTCOME: ${{ steps.action.outcome }}
+          SHA: ${{ steps.action.outputs.sha }}
         run: |
           echo "outcome: $OUTCOME"
-          # The action will fail because the cluster URL is not a real accessible
-          # ArgoCD config repo, but the important thing is that the action was
-          # invoked with commit-status-github-token and did not error on input
-          # validation (i.e., it proceeded past input parsing).
+          echo "sha: $SHA"
           if [ "$OUTCOME" = "success" ]; then
-            echo "PASS: action succeeded"
+            if [ -z "$SHA" ]; then
+              echo "FAIL: action succeeded but sha output is empty"
+              exit 1
+            fi
+            echo "PASS: action succeeded with sha=$SHA"
           elif [ "$OUTCOME" = "failure" ]; then
-            echo "PASS: action failed gracefully (expected - no real ArgoCD config repo accessible)"
+            echo "PASS: action failed gracefully (expected with sentinel repo / missing real argocd config repo)"
           else
             echo "FAIL: unexpected outcome '$OUTCOME'"
             exit 1
