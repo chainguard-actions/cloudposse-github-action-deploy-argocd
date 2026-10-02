@@ -164,13 +164,12 @@ runs:
         node-version: 24
     - name: Install git-url-parse
       shell: bash
-      env:
-        NPM_CONFIG_USERCONFIG: /dev/null
-        RUNNER_TEMP: ${{ runner.temp }}
       run: |
         mkdir -p "$RUNNER_TEMP/action-deps"
         cd "$RUNNER_TEMP/action-deps"
         npm install git-url-parse@14.0.0 --no-save
+      env:
+        NPM_CONFIG_USERCONFIG: /dev/null
     - name: Parse git URL for destination
       uses: chainguard-actions/actions-github-script@90ea3578c9f973abcd1e50255ba3c1cd19216b51 # v9.0.0, node 20
       id: destination
@@ -227,10 +226,10 @@ runs:
       if: ${{ inputs.operation == 'deploy' && inputs.ssm-path != '' }}
       shell: bash
       env:
-        SSM_PATH: ${{ inputs.ssm-path }}
-        ENVIRONMENT: ${{ inputs.environment }}
+        INPUT_SSM_PATH: ${{ inputs.ssm-path }}
+        INPUT_ENVIRONMENT: ${{ inputs.environment }}
       run: |
-        chamber --verbose export "${SSM_PATH}/${ENVIRONMENT}" --format yaml --output-file ./platform.yaml
+        chamber --verbose export "${INPUT_SSM_PATH}/${INPUT_ENVIRONMENT}" --format yaml --output-file ./platform.yaml
     - name: YQ Platform settings
       if: ${{ inputs.operation == 'deploy' && inputs.ssm-path != '' }}
       shell: bash
@@ -244,9 +243,9 @@ runs:
       if: ${{ inputs.operation == 'deploy' && inputs.ssm-path != '' }}
       shell: bash
       env:
-        SSM_PATH: ${{ inputs.ssm-path }}
+        INPUT_SSM_PATH: ${{ inputs.ssm-path }}
       run: |
-        chamber --verbose export "${SSM_PATH}/_metadata" --format yaml --output-file ./_metadata.yaml
+        chamber --verbose export "${INPUT_SSM_PATH}/_metadata" --format yaml --output-file ./_metadata.yaml
     - name: YQ Platform settings
       if: ${{ inputs.operation == 'deploy' && inputs.ssm-path != '' }}
       shell: bash
@@ -284,16 +283,16 @@ runs:
       env:
         CONFIG_TMP: ${{ steps.config.outputs.tmp }}
       run: |
-        mkdir -p "${CONFIG_TMP}/manifests"
+        mkdir -p "$CONFIG_TMP/manifests"
     - name: Helmfile render
       if: ${{ inputs.toolchain == 'helmfile' && inputs.operation == 'deploy' }}
       shell: bash
       env:
-        IMAGE_NAME: ${{ inputs.image }}
-        IMAGE_TAG: ${{ inputs.image-tag }}
         INPUT_NAMESPACE: ${{ inputs.namespace }}
         INPUT_ENVIRONMENT: ${{ inputs.environment }}
         INPUT_PATH: ${{ inputs.path }}
+        IMAGE_NAME: ${{ inputs.image }}
+        IMAGE_TAG: ${{ inputs.image-tag }}
         INPUT_HELMFILE_ARGS: ${{ inputs.helmfile-args }}
         KUBE_VERSION_ARG: ${{ steps.arguments.outputs.kube_version }}
         CONFIG_TMP: ${{ steps.config.outputs.tmp }}
@@ -314,7 +313,7 @@ runs:
           --state-values-file $(pwd)/platform.yaml \
           template \
           --args="${kube_args[*]}" \
-          "${helmfile_args[@]}" > "${CONFIG_TMP}/manifests/resources.yaml"
+          "${helmfile_args[@]}" > "$CONFIG_TMP/manifests/resources.yaml"
     - name: Build Helm Dependencies
       if: ${{ inputs.toolchain == 'helm' && inputs.operation == 'deploy' && inputs.helm-dependency-build == 'true'}}
       shell: bash
@@ -326,8 +325,6 @@ runs:
       if: ${{ inputs.toolchain == 'helm' && inputs.operation == 'deploy' }}
       shell: bash
       env:
-        IMAGE_NAME: ${{ inputs.image }}
-        IMAGE_TAG: ${{ inputs.image-tag }}
         INPUT_VALUES_FILE: ${{ inputs.values_file }}
         INPUT_APPLICATION: ${{ inputs.application }}
         INPUT_PATH: ${{ inputs.path }}
@@ -338,6 +335,8 @@ runs:
         INPUT_HELM_ARGS: ${{ inputs.helm-args }}
         KUBE_VERSION_ARG: ${{ steps.arguments.outputs.kube_version }}
         CONFIG_TMP: ${{ steps.config.outputs.tmp }}
+        IMAGE_NAME: ${{ inputs.image }}
+        IMAGE_TAG: ${{ inputs.image-tag }}
       run: |
         values_args=()
         if [ -n "$INPUT_VALUES_FILE" ]; then
@@ -365,11 +364,11 @@ runs:
           --create-namespace=true \
           --namespace "$INPUT_NAMESPACE" \
           --set ingress.default.hosts.example=test \
-          --values $(pwd)/platform.yaml \
+          --values "$(pwd)/platform.yaml" \
           "${values_args[@]}" \
           "${helm_args[@]}" \
           "${kube_args[@]}" \
-        > "${CONFIG_TMP}/manifests/resources.yaml"
+        > "$CONFIG_TMP/manifests/resources.yaml"
     - name: Get Webapp
       if: ${{ inputs.operation == 'deploy' }}
       id: result
@@ -379,9 +378,9 @@ runs:
       run: |-
         WEBAPP_URL=$( \
           yq -N eval-all '[.metadata.annotations["outputs.platform.cloudposse.com/webapp-url"] | select(. != null)] | .[0]' \
-            "${CONFIG_TMP}/manifests/resources.yaml" \
+            "$CONFIG_TMP/manifests/resources.yaml" \
         )
-        safe=$(printf '%s' "${WEBAPP_URL}" | tr -d '\n\r')
+        safe=$(printf '%s' "$WEBAPP_URL" | tr -d '\n\r')
         echo "webapp_url=${safe}" >> "$GITHUB_OUTPUT"
     - name: Deplicated Ref
       if: ${{ inputs.operation == 'deploy' }}
@@ -411,11 +410,11 @@ runs:
         timeout_seconds: ${{ inputs.commit-timeout }}
         retry_wait_seconds: ${{ inputs.commit-retry-interval }}
         shell: bash
-        command: "set -e\n\ngit config --global user.email \"bot@example.com\"\ngit config --global user.name \"cloudpossebot\"\n\npushd \"./$DESTINATION_DIR_NAME\"\n\ngit reset --hard \"origin/$DESTINATION_REF\"\ngit pull --rebase\n\npopd\n\ncase \"$INPUT_OPERATION\" in\n\n  deploy)\n    cp -r ./tmp/* \"./$DESTINATION_DIR_NAME/\"\n  ;;\n\n  destroy)\n    rm -rf \"./$DESTINATION_DIR_NAME/$CONFIG_PATH\"\n  ;;\n\n  *)\n    echo \"Operation should be \\`deploy\\` or \\`destroy\\`\"\n    exit 1;\n  ;;\nesac          \n\npushd \"./$DESTINATION_DIR_NAME\"\n\ngit add -A\ngit status\ngit diff-index --quiet HEAD || git commit -m \"Deploy $GH_REPOSITORY SHA $GH_SHA RUN $GH_RUN_ID ATEMPT $GH_RUN_ATTEMPT\"\ngit push origin \"$DESTINATION_REF\"\n\necho \"sha=$(git rev-parse HEAD)\" >> $GITHUB_OUTPUT\n\npopd"
+        command: "set -e\n\ngit config --global user.email \"bot@example.com\"\ngit config --global user.name \"cloudpossebot\"\n\npushd \"./$DESTINATION_DIR\"\n\ngit reset --hard \"origin/$DESTINATION_REF\"\ngit pull --rebase\n\npopd\n\ncase \"$INPUT_OPERATION\" in\n\n  deploy)\n    cp -r ./tmp/* \"./$DESTINATION_DIR/\"\n  ;;\n\n  destroy)\n    rm -rf \"./$DESTINATION_DIR/$CONFIG_PATH\"\n  ;;\n\n  *)\n    echo \"Operation should be \\`deploy\\` or \\`destroy\\`\"\n    exit 1;\n  ;;\nesac          \n\npushd \"./$DESTINATION_DIR\"\n\ngit add -A\ngit status\ngit diff-index --quiet HEAD || git commit -m \"Deploy $GH_REPOSITORY SHA $GH_SHA RUN $GH_RUN_ID ATEMPT $GH_RUN_ATTEMPT\"\ngit push origin \"$DESTINATION_REF\"\n\necho \"sha=$(git rev-parse HEAD)\" >> $GITHUB_OUTPUT\n\npopd"
       env:
-        DESTINATION_DIR_NAME: ${{ steps.destination_dir.outputs.name }}
-        DESTINATION_REF: ${{ steps.destination.outputs.ref }}
         INPUT_OPERATION: ${{ inputs.operation }}
+        DESTINATION_DIR: ${{ steps.destination_dir.outputs.name }}
+        DESTINATION_REF: ${{ steps.destination.outputs.ref }}
         CONFIG_PATH: ${{ steps.config.outputs.path }}
         GH_REPOSITORY: ${{ github.repository }}
         GH_SHA: ${{ github.sha }}
