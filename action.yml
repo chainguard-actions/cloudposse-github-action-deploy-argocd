@@ -165,8 +165,8 @@ runs:
     - name: Install git-url-parse
       shell: bash
       env:
-        RUNNER_TEMP: ${{ runner.temp }}
         NPM_CONFIG_USERCONFIG: /dev/null
+        RUNNER_TEMP: ${{ runner.temp }}
       run: |
         mkdir -p "$RUNNER_TEMP/action-deps"
         cd "$RUNNER_TEMP/action-deps"
@@ -176,9 +176,9 @@ runs:
       id: destination
       env:
         NODE_PATH: ${{ runner.temp }}/action-deps/node_modules
-        CLUSTER: ${{ inputs.cluster }}
+        INPUT_CLUSTER: ${{ inputs.cluster }}
       with:
-        script: "const GitUrlParse = require(\"git-url-parse\");\nfunction run(url) {\n  try { \n    console.log(\"url: %s\", url)\n    const urlObj = GitUrlParse(url);\n    core.setOutput('result', JSON.stringify(urlObj));\n    const keys = Object.keys(urlObj);\n    keys.forEach(key=>{\n      if(typeof urlObj[key] === 'string' || urlObj[key] === null){\n        core.setOutput(key, urlObj[key]);\n      }\n    })\n  } \n  catch (error) {\n    core.setFailed(error.message);\n  }\n}\nrun(process.env.CLUSTER)\n"
+        script: "const GitUrlParse = require(\"git-url-parse\");\nfunction run(url) {\n  try { \n    console.log(\"url: %s\", url)\n    const urlObj = GitUrlParse(url);\n    core.setOutput('result', JSON.stringify(urlObj));\n    const keys = Object.keys(urlObj);\n    keys.forEach(key=>{\n      if(typeof urlObj[key] === 'string' || urlObj[key] === null){\n        core.setOutput(key, urlObj[key]);\n      }\n    })\n  } \n  catch (error) {\n    core.setFailed(error.message);\n  }\n}\nrun(process.env.INPUT_CLUSTER)\n"
     - id: destination_dir
       shell: bash
       run: |-
@@ -284,7 +284,7 @@ runs:
       env:
         CONFIG_TMP: ${{ steps.config.outputs.tmp }}
       run: |
-        mkdir -p "${CONFIG_TMP}/manifests"
+        mkdir -p "$CONFIG_TMP/manifests"
     - name: Helmfile render
       if: ${{ inputs.toolchain == 'helmfile' && inputs.operation == 'deploy' }}
       shell: bash
@@ -292,29 +292,29 @@ runs:
         INPUT_NAMESPACE: ${{ inputs.namespace }}
         INPUT_ENVIRONMENT: ${{ inputs.environment }}
         INPUT_PATH: ${{ inputs.path }}
+        INPUT_HELMFILE_ARGS: ${{ inputs.helmfile-args }}
         CONFIG_TMP: ${{ steps.config.outputs.tmp }}
+        KUBE_VERSION_ARG: ${{ steps.arguments.outputs.kube_version }}
         IMAGE_NAME: ${{ inputs.image }}
         IMAGE_TAG: ${{ inputs.image-tag }}
-        KUBE_VERSION_ARG: ${{ steps.arguments.outputs.kube_version }}
-        INPUT_HELMFILE_ARGS: ${{ inputs.helmfile-args }}
       run: |
-        opts=()
+        helmfile_args=()
         if [ -n "$INPUT_HELMFILE_ARGS" ]; then
-          while IFS= read -r -d '' t; do opts+=("$t"); done \
+          while IFS= read -r -d '' t; do helmfile_args+=("$t"); done \
             < <(printf '%s' "$INPUT_HELMFILE_ARGS" | xargs printf '%s\0')
         fi
-        kube_opts=()
+        kube_version_args=()
         if [ -n "$KUBE_VERSION_ARG" ]; then
-          while IFS= read -r -d '' t; do kube_opts+=("$t"); done \
+          while IFS= read -r -d '' t; do kube_version_args+=("$t"); done \
             < <(printf '%s' "$KUBE_VERSION_ARG" | xargs printf '%s\0')
         fi
         helmfile --namespace "$INPUT_NAMESPACE" \
           --environment "$INPUT_ENVIRONMENT" \
           --file "$INPUT_PATH" \
-          --state-values-file "$(pwd)/platform.yaml" \
+          --state-values-file $(pwd)/platform.yaml \
           template \
-          --args="${KUBE_VERSION_ARG}" \
-          "${opts[@]}" > "${CONFIG_TMP}/manifests/resources.yaml"
+          --args="${kube_version_args[*]}" \
+          "${helmfile_args[@]}" > "$CONFIG_TMP/manifests/resources.yaml"
     - name: Build Helm Dependencies
       if: ${{ inputs.toolchain == 'helm' && inputs.operation == 'deploy' && inputs.helm-dependency-build == 'true'}}
       shell: bash
@@ -339,35 +339,35 @@ runs:
         IMAGE_NAME: ${{ inputs.image }}
         IMAGE_TAG: ${{ inputs.image-tag }}
       run: |
-        values_arr=()
-        if [ -n "$INPUT_VALUES_FILE" ]; then
-          while IFS= read -r -d '' t; do values_arr+=(--values "$t"); done \
-            < <(printf '%s' "$INPUT_VALUES_FILE" | tr ', ' '\n\n' | grep -v '^$' | xargs printf '%s\0')
-        fi
+        VALUES_STR=()
+        IFS=', ' read -r -a array <<< "$INPUT_VALUES_FILE"
+        for element in "${array[@]}"; do VALUES_STR+=("--values" "$element"); done
+
         helm_args=()
         if [ -n "$INPUT_HELM_ARGS" ]; then
           while IFS= read -r -d '' t; do helm_args+=("$t"); done \
             < <(printf '%s' "$INPUT_HELM_ARGS" | xargs printf '%s\0')
         fi
-        kube_opts=()
+        kube_version_args=()
         if [ -n "$KUBE_VERSION_ARG" ]; then
-          while IFS= read -r -d '' t; do kube_opts+=("$t"); done \
+          while IFS= read -r -d '' t; do kube_version_args+=("$t"); done \
             < <(printf '%s' "$KUBE_VERSION_ARG" | xargs printf '%s\0')
         fi
+
         helm template "$INPUT_APPLICATION" "$INPUT_PATH" \
-          --set "image.repository=$INPUT_IMAGE" \
-          --set "global.image.repository=$INPUT_IMAGE" \
-          --set "image.tag=$INPUT_IMAGE_TAG" \
-          --set "global.image.tag=$INPUT_IMAGE_TAG" \
-          --set "environment=$INPUT_ENVIRONMENT" \
+          --set image.repository="$INPUT_IMAGE" \
+          --set global.image.repository="$INPUT_IMAGE" \
+          --set image.tag="$INPUT_IMAGE_TAG" \
+          --set global.image.tag="$INPUT_IMAGE_TAG" \
+          --set environment="$INPUT_ENVIRONMENT" \
           --create-namespace=true \
           --namespace "$INPUT_NAMESPACE" \
           --set ingress.default.hosts.example=test \
-          --values "$(pwd)/platform.yaml" \
-          "${values_arr[@]}" \
+          --values $(pwd)/platform.yaml \
+          "${VALUES_STR[@]}" \
           "${helm_args[@]}" \
-          "${kube_opts[@]}" \
-        > "${CONFIG_TMP}/manifests/resources.yaml"
+          "${kube_version_args[@]}" \
+        > "$CONFIG_TMP/manifests/resources.yaml"
     - name: Get Webapp
       if: ${{ inputs.operation == 'deploy' }}
       id: result
@@ -377,9 +377,9 @@ runs:
       run: |-
         WEBAPP_URL=$( \
           yq -N eval-all '[.metadata.annotations["outputs.platform.cloudposse.com/webapp-url"] | select(. != null)] | .[0]' \
-            "${CONFIG_TMP}/manifests/resources.yaml" \
+            "$CONFIG_TMP/manifests/resources.yaml" \
         )
-        safe=$(printf '%s' "${WEBAPP_URL}" | tr -d '\n\r')
+        safe=$(printf '%s' "$WEBAPP_URL" | tr -d '\n\r')
         echo "webapp_url=${safe}" >> $GITHUB_OUTPUT
     - name: Deplicated Ref
       if: ${{ inputs.operation == 'deploy' }}
