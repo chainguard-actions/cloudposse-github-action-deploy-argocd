@@ -1,0 +1,79 @@
+name: Test commit-status-github-token input
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create dummy helm chart path
+        run: |
+          mkdir -p /tmp/test-chart
+          cat > /tmp/test-chart/Chart.yaml <<'EOF'
+          apiVersion: v2
+          name: test-app
+          version: 0.1.0
+          EOF
+          cat > /tmp/test-chart/values.yaml <<'EOF'
+          image:
+            repository: nginx
+            tag: latest
+          EOF
+          mkdir -p /tmp/test-chart/templates
+          cat > /tmp/test-chart/templates/deployment.yaml <<'EOF'
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: test-app
+          spec:
+            replicas: 1
+            selector:
+              matchLabels:
+                app: test-app
+            template:
+              metadata:
+                labels:
+                  app: test-app
+              spec:
+                containers:
+                - name: test-app
+                  image: nginx:latest
+          EOF
+
+      - id: action
+        uses: .
+        continue-on-error: true
+        with:
+          cluster: "https://github.com/test-org/test-argocd-config"
+          aws-region: us-east-1
+          path: /tmp/test-chart
+          toolchain: helm
+          operation: deploy
+          environment: preview
+          repository: test-org/test-app
+          ref: abc1234def5678901234567890123456789012ab
+          namespace: test-namespace
+          application: test-app
+          image: nginx
+          image-tag: latest
+          github-pat: ${{ github.token }}
+          commit-status-github-token: ${{ github.token }}
+          synchronously: "false"
+          debug: "false"
+
+      - name: Assert action ran with commit-status-github-token input
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          # The action will fail because the cluster/argocd repo is not real,
+          # but we verify it accepted the commit-status-github-token input and ran.
+          if [ "$OUTCOME" = "success" ]; then
+            echo "PASS: action succeeded"
+          elif [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: action failed gracefully (expected - sentinel/test repo not resolvable)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi

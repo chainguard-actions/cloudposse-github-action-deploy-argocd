@@ -276,7 +276,7 @@ runs:
       id: arguments
       uses: chainguard-actions/cloudposse-github-action-yaml-config-query@83f84fa262cbd8aee907d7d03a812d7450fdec5c # v1.0.1
       with:
-        query: .\"${{ steps.resolved_kube_version.outputs.value == '' }}\"
+        query: ."${{ steps.resolved_kube_version.outputs.value == '' }}"
         config: "true: \n  kube_version: \"\"\nfalse:\n  kube_version: --kube-version=${{ steps.resolved_kube_version.outputs.value }}      "
     - name: Ensure argocd repo structure
       if: ${{ inputs.operation == 'deploy' }}
@@ -284,7 +284,7 @@ runs:
       env:
         CONFIG_TMP: ${{ steps.config.outputs.tmp }}
       run: |
-        mkdir -p "$CONFIG_TMP/manifests"
+        mkdir -p "${CONFIG_TMP}/manifests"
     - name: Helmfile render
       if: ${{ inputs.toolchain == 'helmfile' && inputs.operation == 'deploy' }}
       shell: bash
@@ -292,29 +292,29 @@ runs:
         INPUT_NAMESPACE: ${{ inputs.namespace }}
         INPUT_ENVIRONMENT: ${{ inputs.environment }}
         INPUT_PATH: ${{ inputs.path }}
+        KUBE_VERSION_ARG: ${{ steps.arguments.outputs.kube_version }}
         INPUT_HELMFILE_ARGS: ${{ inputs.helmfile-args }}
         CONFIG_TMP: ${{ steps.config.outputs.tmp }}
-        KUBE_VERSION_ARG: ${{ steps.arguments.outputs.kube_version }}
         IMAGE_NAME: ${{ inputs.image }}
         IMAGE_TAG: ${{ inputs.image-tag }}
       run: |
         helmfile_args=()
         if [ -n "$INPUT_HELMFILE_ARGS" ]; then
           while IFS= read -r -d '' t; do helmfile_args+=("$t"); done \
-            < <(printf '%s' "$INPUT_HELMFILE_ARGS" | xargs printf '%s\0')
+            < <(printf '%s' "$INPUT_HELMFILE_ARGS" | xargs -r printf '%s\0')
         fi
-        kube_version_args=()
+        kube_args=()
         if [ -n "$KUBE_VERSION_ARG" ]; then
-          while IFS= read -r -d '' t; do kube_version_args+=("$t"); done \
-            < <(printf '%s' "$KUBE_VERSION_ARG" | xargs printf '%s\0')
+          while IFS= read -r -d '' t; do kube_args+=("$t"); done \
+            < <(printf '%s' "$KUBE_VERSION_ARG" | xargs -r printf '%s\0')
         fi
         helmfile --namespace "$INPUT_NAMESPACE" \
           --environment "$INPUT_ENVIRONMENT" \
           --file "$INPUT_PATH" \
           --state-values-file $(pwd)/platform.yaml \
           template \
-          --args="${kube_version_args[*]}" \
-          "${helmfile_args[@]}" > "$CONFIG_TMP/manifests/resources.yaml"
+          --args="${kube_args[*]}" \
+          "${helmfile_args[@]}" > "${CONFIG_TMP}/manifests/resources.yaml"
     - name: Build Helm Dependencies
       if: ${{ inputs.toolchain == 'helm' && inputs.operation == 'deploy' && inputs.helm-dependency-build == 'true'}}
       shell: bash
@@ -340,20 +340,20 @@ runs:
         IMAGE_TAG: ${{ inputs.image-tag }}
       run: |
         VALUES_STR=()
-        IFS=', ' read -r -a array <<< "$INPUT_VALUES_FILE"
-        for element in "${array[@]}"; do VALUES_STR+=("--values" "$element"); done
-
+        if [ -n "$INPUT_VALUES_FILE" ]; then
+          IFS=', ' read -r -a array <<< "$INPUT_VALUES_FILE"
+          for element in "${array[@]}"; do VALUES_STR+=(--values "$element"); done
+        fi
         helm_args=()
         if [ -n "$INPUT_HELM_ARGS" ]; then
           while IFS= read -r -d '' t; do helm_args+=("$t"); done \
-            < <(printf '%s' "$INPUT_HELM_ARGS" | xargs printf '%s\0')
+            < <(printf '%s' "$INPUT_HELM_ARGS" | xargs -r printf '%s\0')
         fi
-        kube_version_args=()
+        kube_args=()
         if [ -n "$KUBE_VERSION_ARG" ]; then
-          while IFS= read -r -d '' t; do kube_version_args+=("$t"); done \
-            < <(printf '%s' "$KUBE_VERSION_ARG" | xargs printf '%s\0')
+          while IFS= read -r -d '' t; do kube_args+=("$t"); done \
+            < <(printf '%s' "$KUBE_VERSION_ARG" | xargs -r printf '%s\0')
         fi
-
         helm template "$INPUT_APPLICATION" "$INPUT_PATH" \
           --set image.repository="$INPUT_IMAGE" \
           --set global.image.repository="$INPUT_IMAGE" \
@@ -366,8 +366,8 @@ runs:
           --values $(pwd)/platform.yaml \
           "${VALUES_STR[@]}" \
           "${helm_args[@]}" \
-          "${kube_version_args[@]}" \
-        > "$CONFIG_TMP/manifests/resources.yaml"
+          "${kube_args[@]}" \
+        > "${CONFIG_TMP}/manifests/resources.yaml"
     - name: Get Webapp
       if: ${{ inputs.operation == 'deploy' }}
       id: result
@@ -377,7 +377,7 @@ runs:
       run: |-
         WEBAPP_URL=$( \
           yq -N eval-all '[.metadata.annotations["outputs.platform.cloudposse.com/webapp-url"] | select(. != null)] | .[0]' \
-            "$CONFIG_TMP/manifests/resources.yaml" \
+            "${CONFIG_TMP}/manifests/resources.yaml" \
         )
         safe=$(printf '%s' "$WEBAPP_URL" | tr -d '\n\r')
         echo "webapp_url=${safe}" >> $GITHUB_OUTPUT
@@ -386,7 +386,7 @@ runs:
       id: ref
       uses: chainguard-actions/cloudposse-github-action-yaml-config-query@83f84fa262cbd8aee907d7d03a812d7450fdec5c # v1.0.1
       with:
-        query: .\"${{ inputs.gitref-sha == '' }}\"
+        query: ."${{ inputs.gitref-sha == '' }}"
         config: "true: \n  value: ${{ inputs.ref }}\nfalse:\n  value: ${{ inputs.gitref-sha }}      "
     - name: Config render
       if: ${{ inputs.operation == 'deploy' }}
@@ -404,18 +404,17 @@ runs:
     - name: Push to Github
       uses: chainguard-actions/nick-fields-retry@f9b0f284c065c8f5653622b1e49cef936dcfea60 # v4
       id: git
-      env:
-        DESTINATION_DIR: ${{ steps.destination_dir.outputs.name }}
-        DESTINATION_REF: ${{ steps.destination.outputs.ref }}
-        INPUT_OPERATION: ${{ inputs.operation }}
-        CONFIG_PATH: ${{ steps.config.outputs.path }}
-        GIT_COMMIT_MSG: "Deploy ${{ github.repository }} SHA ${{ github.sha }} RUN ${{ github.run_id }} ATEMPT ${{ github.run_attempt }}"
       with:
         max_attempts: ${{ inputs.commit-retry-count }}
         timeout_seconds: ${{ inputs.commit-timeout }}
         retry_wait_seconds: ${{ inputs.commit-retry-interval }}
         shell: bash
-        command: "set -e\n\ngit config --global user.email \"bot@example.com\"\ngit config --global user.name \"cloudpossebot\"\n\npushd \"./$DESTINATION_DIR\"\n\ngit reset --hard \"origin/$DESTINATION_REF\"\ngit pull --rebase\n\npopd\n\ncase \"$INPUT_OPERATION\" in\n\n  deploy)\n    cp -r ./tmp/* \"./$DESTINATION_DIR/\"\n  ;;\n\n  destroy)\n    rm -rf \"./$DESTINATION_DIR/$CONFIG_PATH\"\n  ;;\n\n  *)\n    echo \"Operation should be \\`deploy\\` or \\`destroy\\`\"\n    exit 1;\n  ;;\nesac          \n\npushd \"./$DESTINATION_DIR\"\n\ngit add -A\ngit status\ngit diff-index --quiet HEAD || git commit -m \"$GIT_COMMIT_MSG\"\ngit push origin \"$DESTINATION_REF\"\n\necho \"sha=$(git rev-parse HEAD)\" >> $GITHUB_OUTPUT\n\npopd"
+        command: "set -e\n\ngit config --global user.email \"bot@example.com\"\ngit config --global user.name \"cloudpossebot\"\n\npushd \"./$DESTINATION_DIR_NAME\"\n\ngit reset --hard \"origin/$DESTINATION_REF\"\ngit pull --rebase\n\npopd\n\ncase \"$INPUT_OPERATION\" in\n\n  deploy)\n    cp -r ./tmp/* \"./$DESTINATION_DIR_NAME/\"\n  ;;\n\n  destroy)\n    rm -rf \"./$DESTINATION_DIR_NAME/$CONFIG_PATH\"\n  ;;\n\n  *)\n    echo \"Operation should be \\`deploy\\` or \\`destroy\\`\"\n    exit 1;\n  ;;\nesac          \n\npushd \"./$DESTINATION_DIR_NAME\"\n\ngit add -A\ngit status\ngit diff-index --quiet HEAD || git commit -m \"Deploy $GITHUB_REPOSITORY SHA $GITHUB_SHA RUN $GITHUB_RUN_ID ATEMPT $GITHUB_RUN_ATTEMPT\"\ngit push origin \"$DESTINATION_REF\"\n\necho \"sha=$(git rev-parse HEAD)\" >> $GITHUB_OUTPUT\n\npopd"
+      env:
+        DESTINATION_DIR_NAME: ${{ steps.destination_dir.outputs.name }}
+        DESTINATION_REF: ${{ steps.destination.outputs.ref }}
+        INPUT_OPERATION: ${{ inputs.operation }}
+        CONFIG_PATH: ${{ steps.config.outputs.path }}
     - name: Select GitHub Token for Sync Mode
       id: commit_status_github_token
       if: ${{ inputs.synchronously == 'true' && inputs.operation == 'deploy' }}
