@@ -1,4 +1,4 @@
-name: Test commit-status-github-token input
+name: Test deploy with commit-status-github-token (synchronous mode)
 on:
   workflow_dispatch:
 jobs:
@@ -11,17 +11,18 @@ jobs:
         uses: .
         continue-on-error: true
         with:
-          cluster: "https://github.com/example-org/argocd-config"
-          path: "deploy/helmfile.yaml"
+          cluster: git@github.com:example-org/argocd-config.git
+          aws-region: us-east-1
+          path: deploy/helmfile.yaml
           toolchain: helmfile
           operation: deploy
           environment: preview
-          repository: "example-org/example-app"
-          ref: "abc1234"
-          namespace: "preview"
-          application: "my-app"
-          image: "example.com/my-app"
-          image-tag: "latest"
+          repository: example-org/example-app
+          ref: abc1234def5678901234567890abcdef12345678
+          namespace: preview
+          application: my-app
+          image: nginx
+          image-tag: latest
           github-pat: ${{ github.token }}
           commit-status-github-token: ${{ github.token }}
           synchronously: "true"
@@ -31,15 +32,15 @@ jobs:
           commit-retry-interval: "5"
           commit-timeout: "30"
 
-      - name: Assert action ran with commit-status-github-token input
+      - name: Assert action ran (failed gracefully on sentinel/unreachable repo)
         env:
           OUTCOME: ${{ steps.action.outcome }}
         run: |
           echo "outcome: $OUTCOME"
           if [ "$OUTCOME" = "success" ]; then
-            echo "PASS: action succeeded"
+            echo "PASS: action succeeded unexpectedly (sentinel repo resolved)"
           elif [ "$OUTCOME" = "failure" ]; then
-            echo "PASS: action failed gracefully (expected with sentinel repo)"
+            echo "PASS: action failed gracefully as expected (cannot reach external ArgoCD repo)"
           else
             echo "FAIL: unexpected outcome '$OUTCOME'"
             exit 1
