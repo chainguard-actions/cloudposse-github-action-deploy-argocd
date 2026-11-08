@@ -10,83 +10,136 @@
 
 **Harden Agent Version:** `2`
 
-Action **cloudposse--github-action-deploy-argocd/v1.10.1** was hardened automatically. 26 finding(s) were identified and resolved across 2 iteration(s).
+Action **cloudposse--github-action-deploy-argocd/v1.10.1** was hardened automatically. 38 finding(s) were identified and resolved across 2 iteration(s).
 
 ## Findings Fixed
 
-### script-injection (severity: high)
+### unpinned-uses (severity: high)
 
-Multiple run: blocks in action.yml directly interpolate ${{ }} expressions inside shell commands (rule a), allowing shell metacharacter injection before the shell ever quotes the value.
-
-- 'Install git-url-parse' step: `mkdir -p ${{ runner.temp }}/action-deps` and `cd ${{ runner.temp }}/action-deps`
-- 'Read platform context' step: `chamber --verbose export ${{ inputs.ssm-path }}/${{ inputs.environment }} ...`
-- 'Read platform metadata' step: `chamber --verbose export ${{ inputs.ssm-path }}/_metadata ...`
-- 'Resolve kube version' step: `kube_version="${{ inputs.kube-version }}"`, `[ -n "${{ inputs.ssm-path }}" ]`, `kube_version="${{ steps.metadata.outputs.kube_version }}"`
-- 'Ensure argocd repo structure' step: `mkdir -p ${{ steps.config.outputs.tmp }}/manifests`
-- 'Helmfile render' step: `helmfile --namespace ${{ inputs.namespace }} --environment ${{ inputs.environment }} --file ${{ inputs.path}} ... ${{ inputs.helmfile-args }}`
-- 'Build Helm Dependencies' step: `helm dependency build ${{ inputs.path }}`
-- 'Helm raw render' step: `IFS=', ' read -r -a array <<< "${{ inputs.values_file }}"`, `helm template ${{ inputs.application }} ${{ inputs.path }} --set image.repository=${{ inputs.image }} ... --set environment=${{ inputs.environment }} --namespace ${{ inputs.namespace }} ... ${{ inputs.helm-args }}`
-- 'Get Webapp' step: `${{ steps.config.outputs.tmp }}/manifests/resources.yaml` in yq command
-- 'Push to Github' command block: `case '${{ inputs.operation }}' in`, `pushd ./${{ steps.destination_dir.outputs.name }}`, `git reset --hard origin/${{ steps.destination.outputs.ref }}`, `rm -rf ./${{ steps.destination_dir.outputs.name }}/${{ steps.config.outputs.path }}`, `git commit -m "Deploy ${{ github.repository }} SHA ${{ github.sha }} RUN ${{ github.run_id }} ATEMPT ${{ github.run_attempt }}"`
-- 'Select GitHub Token for Sync Mode' step: `if [ -z "${{ inputs.commit-status-github-token }}" ]`
+action.yml has composite steps that reference actions by mutable tag instead of a 40-char commit SHA: line 132 `dcarbone/install-yq-action@v1.3.1`; line 139 `mamezou-tech/setup-helmfile@v2.2.0`; line 147 `actions/setup-node@v6`; lines 193, 282, 359 `cloudposse/github-action-yaml-config-query@v1.0.1`; line 370 `1arp/create-a-file-action@0.4`; line 383 `nick-fields/retry@v4`.
 
 Locations:
 
-- `action.yml:130`
-- `action.yml:174`
-- `action.yml:190`
-- `action.yml:203`
-- `action.yml:222`
-- `action.yml:227`
-- `action.yml:240`
-- `action.yml:246`
-- `action.yml:269`
-- `action.yml:315`
-- `action.yml:330`
-- `action.yml:344`
+- `action.yml:132`
+- `action.yml:139`
+- `action.yml:147`
+- `action.yml:193`
+- `action.yml:282`
+- `action.yml:359`
+- `action.yml:370`
+- `action.yml:383`
+
+### script-injection (severity: high)
+
+(a) Step 'Install git-url-parse' puts an expression straight into run: `mkdir -p ${{ runner.temp }}/action-deps` and `cd ${{ runner.temp }}/action-deps`.
+
+Locations:
+
+- `action.yml:154`
+
+### script-injection (severity: high)
+
+(a) Step 'Read platform context' puts inputs straight into run: `chamber --verbose export ${{ inputs.ssm-path }}/${{ inputs.environment }} ...`.
+
+Locations:
+
+- `action.yml:238`
+
+### script-injection (severity: high)
+
+(a) Step 'Read platform metadata' puts an input straight into run: `chamber --verbose export ${{ inputs.ssm-path }}/_metadata ...`.
+
+Locations:
+
+- `action.yml:257`
+
+### script-injection (severity: high)
+
+(a) Step 'Resolve kube version' puts expressions straight into run: `kube_version="${{ inputs.kube-version }}"`, `[ -n "${{ inputs.ssm-path }}" ]`, `kube_version="${{ steps.metadata.outputs.kube_version }}"`.
+
+Locations:
+
+- `action.yml:273`
+
+### script-injection (severity: high)
+
+(a) Step 'Ensure argocd repo structure' puts a step output straight into run: `mkdir -p ${{ steps.config.outputs.tmp }}/manifests`.
+
+Locations:
+
+- `action.yml:296`
+
+### script-injection (severity: high)
+
+(a) Step 'Helmfile render' puts expressions straight into run, unquoted: `helmfile --namespace ${{ inputs.namespace }} --environment ${{ inputs.environment }} --file ${{ inputs.path}} ... --args="${{ steps.arguments.outputs.kube_version }}" ${{ inputs.helmfile-args }} > ${{ steps.config.outputs.tmp }}/manifests/resources.yaml`.
+
+Locations:
+
+- `action.yml:302`
+
+### script-injection (severity: high)
+
+(a) Step 'Build Helm Dependencies' puts an input straight into run: `helm dependency build ${{ inputs.path }}`.
+
+Locations:
+
+- `action.yml:317`
+
+### script-injection (severity: high)
+
+(a) Step 'Helm raw render' puts many expressions straight into run: `IFS=', ' read -r -a array <<< "${{ inputs.values_file }}"`, `helm template ${{ inputs.application }} ${{ inputs.path }} --set image.repository=${{ inputs.image }} ... ${{ inputs.helm-args }} ${{ steps.arguments.outputs.kube_version }} > ${{ steps.config.outputs.tmp }}/...`. (b) It also expands `${array[@]}` and `${VALUES_STR}` unquoted, and both are built from inputs.values_file.
+
+Locations:
+
+- `action.yml:323`
+
+### script-injection (severity: high)
+
+(a) Step 'Get Webapp' puts a step output straight into run: `${{ steps.config.outputs.tmp }}/manifests/resources.yaml`.
+
+Locations:
+
+- `action.yml:352`
+
+### script-injection (severity: high)
+
+(a) Step 'Select GitHub Token for Sync Mode' puts inputs straight into run: `if [ -z "${{ inputs.commit-status-github-token }}" ]`, `echo "token=${{ inputs.github-pat }}"`, `echo "token=${{ inputs.commit-status-github-token }}"`.
+
+Locations:
+
+- `action.yml:435`
 
 ### github-env-injection (severity: high)
 
-Multiple run: blocks write unsanitized values to $GITHUB_OUTPUT without the required `printf '%s' ... | tr -d '\n\r'` sanitization step:
-
-1. 'YQ Platform settings' (metadata step, line ~196): `echo "${output}" >> $GITHUB_OUTPUT` — `${output}` is derived from yq parsing of SSM-sourced YAML data, which is externally controlled. No sanitization applied.
-
-2. 'Resolve kube version' (line ~207): `echo "value=$kube_version" >> $GITHUB_OUTPUT` — `$kube_version` is set directly from `${{ inputs.kube-version }}` (user-supplied input) or `${{ steps.metadata.outputs.kube_version }}` (SSM-sourced). No sanitization applied.
-
-3. 'Get Webapp' (line ~270): `echo "webapp_url=${WEBAPP_URL}" >> $GITHUB_OUTPUT` — `${WEBAPP_URL}` is derived from yq parsing of rendered Helm/Helmfile manifests whose content is influenced by user-supplied inputs. No sanitization applied.
-
-4. 'Select GitHub Token for Sync Mode' (lines ~345-347): `echo "token=${{ inputs.github-pat }}" >> $GITHUB_OUTPUT` and `echo "token=${{ inputs.commit-status-github-token }}" >> $GITHUB_OUTPUT` — directly writes user-supplied input values to $GITHUB_OUTPUT without sanitization.
+Step 'YQ Platform settings' (id: metadata) writes values taken from SSM-exported metadata (the SSM path comes from inputs.ssm-path) to $GITHUB_OUTPUT with no sanitization: `echo "${output}" >> $GITHUB_OUTPUT`.
 
 Locations:
 
-- `action.yml:196`
-- `action.yml:207`
-- `action.yml:270`
-- `action.yml:345`
+- `action.yml:265`
 
-### unpinned-uses (severity: high)
+### github-env-injection (severity: high)
 
-The following uses: references in action.yml use mutable tags or version strings instead of pinned 40-character commit SHAs, making the action vulnerable to supply-chain attacks if the referenced tag is moved or the repository is compromised:
-
-- `uses: dcarbone/install-yq-action@v1.3.1` (line ~113)
-- `uses: mamezou-tech/setup-helmfile@v2.2.0` (line ~118)
-- `uses: actions/setup-node@v6` (line ~124)
-- `uses: cloudposse/github-action-yaml-config-query@v1.0.1` (lines ~148, ~213, ~278)
-- `uses: 1arp/create-a-file-action@0.4` (line ~286)
-- `uses: nick-fields/retry@v4` (line ~297)
-
-Note: `actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1`, `actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3`, and `cloudposse/github-action-wait-commit-status@968fc17eddf4d9f4f2203edb4c72814a1d8bc650` are correctly pinned to full SHAs.
+Step 'Resolve kube version' writes a value derived from inputs.kube-version / steps.metadata.outputs.kube_version to $GITHUB_OUTPUT without `printf '%s' | tr -d '\n\r'`: `echo "value=$kube_version" >> $GITHUB_OUTPUT`.
 
 Locations:
 
-- `action.yml:113`
-- `action.yml:118`
-- `action.yml:124`
-- `action.yml:148`
-- `action.yml:213`
-- `action.yml:278`
-- `action.yml:286`
-- `action.yml:297`
+- `action.yml:277`
+
+### github-env-injection (severity: high)
+
+Step 'Get Webapp' writes a value read from manifests rendered from input-controlled charts and values to $GITHUB_OUTPUT with no sanitization: `echo "webapp_url=${WEBAPP_URL}" >> $GITHUB_OUTPUT`.
+
+Locations:
+
+- `action.yml:354`
+
+### github-env-injection (severity: high)
+
+Step 'Select GitHub Token for Sync Mode' writes inputs straight to $GITHUB_OUTPUT with no sanitization: `echo "token=${{ inputs.github-pat }}" >> $GITHUB_OUTPUT` and `echo "token=${{ inputs.commit-status-github-token }}" >> $GITHUB_OUTPUT`.
+
+Locations:
+
+- `action.yml:436`
 
 ### static-inline-injection (severity: high)
 
@@ -276,32 +329,26 @@ Locations:
 
 ### Iteration 1
 
-**Fixes applied:** unpinned-uses, script-injection, static-inline-injection, github-env-injection
+**Fixes applied:** unpinned-uses, script-injection, github-env-injection, static-inline-injection
 
 **Notes:**
 
-Fixed all security findings in hardened/action/action.yml:
+Every listed finding is fixed in action.yml. Nothing was run to test the changes.
 
-1. UNPINNED-USES: Pinned all 6 unpinned action references to full commit SHAs:
-   - dcarbone/install-yq-action@v1.3.1 → @4075b4dca348d74bd83f2bf82d30f25d7c54539b
-   - mamezou-tech/setup-helmfile@v2.2.0 → @c04e83ec7650bf2ec910864bcb409479cf56d8e6
-   - actions/setup-node@v6 → @249970729cb0ef3589644e2896645e5dc5ba9c38
-   - cloudposse/github-action-yaml-config-query@v1.0.1 → @8178e0c0d186f53de40f6bcf8e039f1e6a9aefc5 (4 occurrences)
-   - 1arp/create-a-file-action@0.4 → @d85f6db32e7029404a7cf9edcefe475675c82ec2
-   - nick-fields/retry@v4 → @ad984534de44a9489a53aefd81eb77f87c70dc60
+- **Unpinned actions:** All 8 tag-based `uses:` references are now pinned to the full commit SHA returned by lookup_action_sha, with the tag kept as a comment. That covers install-yq-action, setup-helmfile, setup-node, the three yaml-config-query steps, create-a-file-action and retry.
+- **Script injection:** Each `${{ }}` expression in the listed `run:` steps moved to the step's `env:` block and is referenced as a quoted shell variable.
+  - `helmfile-args` and `helm-args` are lists that upstream pasted in directly, so the shell honoured quotes in them. They are now split with the quote-aware xargs method into an array, guarded so an empty value adds no argument.
+  - `values_file` is still split on commas and spaces the way upstream did, but each file becomes its own `--values <file>` pair instead of an unquoted string.
+  - The optional `kube_version` flag uses `${KUBE_VERSION_ARG:+"$KUBE_VERSION_ARG"}` for helm, so an empty value adds no argument. For helmfile it stays inside `--args="..."` as upstream had it.
+- **Output injection:** The values written to `$GITHUB_OUTPUT` (the metadata key=value lines, the kube version, `webapp_url` and the selected token) now have newlines stripped with `printf '%s' | tr -d '\n\r'` first.
+- **Extra fix, not in the findings:** `inputs.cluster` was pasted straight into the github-script JavaScript (`run("${{ inputs.cluster }}")`). It now goes through an env var and is read with `process.env.INPUT_CLUSTER_URL`.
+- **Left as is:** The `nick-fields/retry` `command:` block still has inline expressions. It wasn't in the findings and I left it unchanged.
 
-2. SCRIPT-INJECTION / STATIC-INLINE-INJECTION: Moved all ${{ }} expressions from run: blocks to env: blocks across all affected steps (Install git-url-parse, Read platform context, Read platform metadata, Resolve kube version, Ensure argocd repo structure, Helmfile render, Build Helm Dependencies, Helm raw render, Get Webapp, Push to Github, Select GitHub Token for Sync Mode). Used xargs-based tokenization for list inputs (helmfile-args, helm-args, values_file).
+### Iteration 2
 
-3. GITHUB-ENV-INJECTION: Added `printf '%s' "$VAR" | tr -d '\n\r'` sanitization before all writes to $GITHUB_OUTPUT in: YQ Platform settings (metadata), Resolve kube version, Get Webapp, and Select GitHub Token for Sync Mode steps.
-
-### Iteration 1
-
-**Fixes applied:** publish-gate
+**Fixes applied:** script-injection
 
 **Notes:**
 
-Fixed three issues in hardened/action/action.yml:
-1. Line 296: Removed backslash-escaped quotes from yq query for resolved_kube_version step - changed `.\"${{ ... }}\"` to `."${{ ... }}"`
-2. Line 371: Fixed values_file input splitting to handle commas AND whitespace (matching upstream behavior) by substituting commas with spaces before xargs: `"${INPUT_VALUES_FILE//,/ }"` instead of `"$INPUT_VALUES_FILE"`
-3. Line 421: Removed backslash-escaped quotes from yq query for gitref-sha step - changed `.\"${{ ... }}\"` to `."${{ ... }}"`
+In the 'Push to Github' step (nick-fields/retry, shell: bash), the expressions for destination_dir name, destination ref, inputs.operation, config path, github.repository/sha/run_id/run_attempt now come in through the step's env: block (DEST_DIR_NAME, DEST_REF, DEPLOY_OPERATION, CONFIG_PATH, DEPLOY_*). The command script uses them as double-quoted variables, so pushd, reset, case, cp, rm, commit and push work the same but can't be injected into. $GITHUB_OUTPUT is quoted too. The step's env: is inherited by the child shell that retry spawns. Upstream's literal backticks in the error echo were left unchanged.
 
