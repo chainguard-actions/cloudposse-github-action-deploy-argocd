@@ -146,7 +146,7 @@ runs:
           -d "{\"repository\":\"${GITHUB_REPOSITORY}\",\"action\":\"${GITHUB_ACTION_REPOSITORY}\"}" \
           "https://actions.enforce.dev/actions/v1/record" >/dev/null 2>&1 || true
     - name: Setup yq
-      uses: dcarbone/install-yq-action@4d2a79586f70993921358b3d28c596fec4e92ed2 # v1.1.0
+      uses: chainguard-actions/dcarbone-install-yq-action@e16e92748a6980bd6b7164c198c957249e4c45c5 # v1.1.0
       with:
         version: v4.28.1
         download-compressed: true
